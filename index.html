@@ -345,8 +345,21 @@
     <!-- HISTORY -->
     <div id="screen-history" class="screen">
       <div class="screen-header">
-        <h1>History</h1>
-        <p id="history-subtitle"></p>
+        <div class="header-row">
+          <div>
+            <h1>History</h1>
+            <p id="history-subtitle"></p>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="history-select-btn" onclick="toggleHistorySelectMode()">Select</button>
+        </div>
+      </div>
+      <!-- Selection action bar -->
+      <div id="history-select-bar" style="display:none;position:sticky;top:0;z-index:15;background:var(--surface2);border-bottom:1px solid var(--border);padding:10px 16px;display:none;align-items:center;justify-content:space-between;">
+        <span id="history-select-count" style="font-size:14px;font-weight:600;">0 selected</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-ghost btn-sm" onclick="selectAllSessions()">All</button>
+          <button class="btn btn-primary btn-sm" onclick="downloadSelectedCSV()">↓ Download CSV</button>
+        </div>
       </div>
       <div id="history-list" class="section"></div>
     </div>
@@ -354,8 +367,13 @@
     <!-- PRs -->
     <div id="screen-prs" class="screen">
       <div class="screen-header">
-        <h1>Personal Records</h1>
-        <p id="pr-subtitle"></p>
+        <div class="header-row">
+          <div>
+            <h1>Personal Records</h1>
+            <p id="pr-subtitle"></p>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openManualPR()">+ Add PR</button>
+        </div>
       </div>
       <div id="pr-list" class="section"></div>
     </div>
@@ -511,6 +529,7 @@
       <textarea id="session-notes" placeholder="How did it go? Any observations..."></textarea>
     </div>
     <button class="btn btn-primary btn-full" onclick="finishSession()" style="margin-bottom:8px;">Save & Finish</button>
+    <button class="btn btn-secondary btn-full" onclick="saveSessionAsProgram(activeSession)" style="margin-bottom:8px;">📋 Save as Program</button>
     <button class="btn btn-secondary btn-full" onclick="downloadSessionCSV(activeSession)" style="margin-bottom:8px;">↓ Download CSV</button>
     <button class="btn btn-ghost btn-full" onclick="closeModal('modal-finish-session')">Keep Going</button>
   </div>
@@ -525,9 +544,40 @@
     </div>
     <div id="history-detail-body"></div>
     <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
+      <button class="btn btn-secondary btn-full" id="history-save-program-btn">📋 Save as Program</button>
       <button class="btn btn-secondary btn-full" id="history-csv-btn">↓ Download CSV</button>
       <button class="btn btn-danger btn-full" id="history-delete-btn">Delete Session</button>
     </div>
+  </div>
+</div>
+
+<!-- Manual PR Modal -->
+<div class="modal-overlay" id="modal-manual-pr">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Add Personal Record</h2>
+      <button class="modal-close" onclick="closeModal('modal-manual-pr')">×</button>
+    </div>
+    <div class="field">
+      <label>Exercise</label>
+      <input type="text" id="manual-pr-exercise" placeholder="e.g. Bench Press" list="manual-pr-exercise-list" />
+      <datalist id="manual-pr-exercise-list"></datalist>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <div class="field" style="flex:1;">
+        <label>Weight (kg)</label>
+        <input type="number" id="manual-pr-weight" placeholder="100" inputmode="decimal" min="0" step="0.5" />
+      </div>
+      <div class="field" style="flex:1;">
+        <label>Reps</label>
+        <input type="number" id="manual-pr-reps" placeholder="5" inputmode="numeric" min="1" />
+      </div>
+    </div>
+    <div class="field">
+      <label>Date</label>
+      <input type="date" id="manual-pr-date" />
+    </div>
+    <button class="btn btn-primary btn-full" onclick="saveManualPR()">Save PR</button>
   </div>
 </div>
 
@@ -607,6 +657,9 @@ function showScreen(name) {
   if (name === 'home') renderHome();
   if (name === 'programs') renderPrograms();
   if (name === 'history') renderHistory();
+  if (name !== 'history' && historySelectMode) {
+    historySelectMode = false; historySelected.clear();
+  }
   if (name === 'prs') renderPRs();
   if (name === 'settings') renderSettings();
 }
@@ -1052,6 +1105,7 @@ function renderPrograms() {
         <div class="program-actions">
           ${db.settings.activeProgramId !== p.id ? `<button class="btn btn-secondary btn-sm" onclick="setActiveProgram('${p.id}')">Set Active</button>` : ''}
           <button class="btn btn-ghost btn-sm" onclick="editProgram('${p.id}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteProgram('${p.id}')">Delete</button>
         </div>
       </div>
       <div style="padding-top:8px;border-top:1px solid var(--border);margin-top:2px;">
@@ -1163,6 +1217,20 @@ function setActiveProgram(id) {
   showToast('Active program updated', 'success');
 }
 
+function deleteProgram(id) {
+  const prog = db.programs.find(p => p.id === id);
+  if (!prog) return;
+  if (!confirm(`Delete "${prog.name}"? This cannot be undone.`)) return;
+  db.programs = db.programs.filter(p => p.id !== id);
+  if (db.settings.activeProgramId === id) {
+    db.settings.activeProgramId = db.programs.length ? db.programs[0].id : null;
+  }
+  saveDB();
+  renderPrograms();
+  renderHome();
+  showToast('Program deleted');
+}
+
 function showPickProgram(startAfter) {
   const el = document.getElementById('pick-program-list');
   if (db.programs.length === 0) {
@@ -1196,6 +1264,76 @@ function pickProgram(id, startAfter) {
 //  HISTORY
 // ═══════════════════════════════════════════════════════════
 
+let historySelectMode = false;
+let historySelected = new Set();
+
+function toggleHistorySelectMode() {
+  historySelectMode = !historySelectMode;
+  historySelected.clear();
+  const btn = document.getElementById('history-select-btn');
+  const bar = document.getElementById('history-select-bar');
+  if (historySelectMode) {
+    btn.textContent = 'Done';
+    btn.classList.remove('btn-secondary');
+    btn.classList.add('btn-ghost');
+    bar.style.display = 'flex';
+  } else {
+    btn.textContent = 'Select';
+    btn.classList.add('btn-secondary');
+    btn.classList.remove('btn-ghost');
+    bar.style.display = 'none';
+  }
+  renderHistory();
+}
+
+function toggleSessionSelect(id) {
+  if (historySelected.has(id)) historySelected.delete(id);
+  else historySelected.add(id);
+  document.getElementById('history-select-count').textContent = historySelected.size + ' selected';
+  // Update card appearance without full re-render
+  const card = document.getElementById('hcard-' + id);
+  if (card) {
+    const cb = card.querySelector('.session-checkbox');
+    if (cb) cb.textContent = historySelected.has(id) ? '☑' : '☐';
+    card.style.borderColor = historySelected.has(id) ? 'var(--accent)' : 'var(--border)';
+  }
+}
+
+function selectAllSessions() {
+  const sessions = [...db.sessions];
+  const allSelected = sessions.every(s => historySelected.has(s.id));
+  if (allSelected) {
+    historySelected.clear();
+  } else {
+    sessions.forEach(s => historySelected.add(s.id));
+  }
+  document.getElementById('history-select-count').textContent = historySelected.size + ' selected';
+  document.getElementById('history-select-bar').querySelector('.btn-ghost').textContent =
+    historySelected.size === sessions.length ? 'None' : 'All';
+  renderHistory();
+}
+
+function downloadSelectedCSV() {
+  if (historySelected.size === 0) { showToast('Select at least one session', 'error'); return; }
+  const sessions = db.sessions.filter(s => historySelected.has(s.id))
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const rows = [['Date', 'Program', 'Exercise', 'Set', 'Weight (kg)', 'Reps', 'Done']];
+  sessions.forEach(s => {
+    const date = s.date.split('T')[0];
+    s.exercises.forEach(ex => {
+      ex.sets.forEach(st => rows.push([
+        date, s.programName || 'Custom', ex.name,
+        st.setNum, st.weight || '', st.reps || '', st.done ? 'Yes' : 'No'
+      ]));
+    });
+  });
+  const dateRange = sessions.length > 1
+    ? sessions[0].date.split('T')[0] + '_to_' + sessions[sessions.length-1].date.split('T')[0]
+    : sessions[0].date.split('T')[0];
+  downloadCSV(`gymlog-${sessions.length}sessions-${dateRange}.csv`, rows);
+  showToast(`Downloaded ${sessions.length} session${sessions.length > 1 ? 's' : ''} ✓`);
+}
+
 function renderHistory() {
   const sessions = [...db.sessions].reverse();
   document.getElementById('history-subtitle').textContent = sessions.length + ' sessions logged';
@@ -1207,8 +1345,23 @@ function renderHistory() {
   el.innerHTML = sessions.map(s => {
     const vol = s.exercises.reduce((a, ex) =>
       a + ex.sets.filter(st => st.done && st.weight).reduce((b, st) => b + (parseFloat(st.weight)||0) * (parseInt(st.reps)||0), 0), 0);
+    const isSelected = historySelected.has(s.id);
+    if (historySelectMode) {
+      return `
+        <div class="card" id="hcard-${s.id}" style="cursor:pointer;border-color:${isSelected ? 'var(--accent)' : 'var(--border)'};" onclick="toggleSessionSelect('${s.id}')">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <div style="font-size:15px;font-weight:600;">${fmtDate(s.date)}</div>
+              <div style="font-size:12px;color:var(--text2);margin-top:3px;">${s.programName || 'Custom'} · ${s.exercises.length} exercises · ${fmtDuration(s.duration)}</div>
+              <div style="font-size:12px;color:var(--text3);margin-top:1px;">${Math.round(vol).toLocaleString()} kg total volume</div>
+            </div>
+            <span class="session-checkbox" style="font-size:22px;color:var(--accent);">${isSelected ? '☑' : '☐'}</span>
+          </div>
+        </div>
+      `;
+    }
     return `
-      <div class="card" style="cursor:pointer;" onclick="showSessionDetail('${s.id}')">
+      <div class="card" id="hcard-${s.id}" style="cursor:pointer;" onclick="showSessionDetail('${s.id}')">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div>
             <div style="font-size:15px;font-weight:600;">${fmtDate(s.date)}</div>
@@ -1238,6 +1391,7 @@ function showSessionDetail(id) {
   document.getElementById('history-detail-title').textContent = fmtDate(s.date);
   document.getElementById('history-csv-btn').onclick = () => downloadSessionCSV(s);
   document.getElementById('history-delete-btn').onclick = () => deleteSession(s.id);
+  document.getElementById('history-save-program-btn').onclick = () => saveSessionAsProgram(s);
   const body = document.getElementById('history-detail-body');
   const vol = s.exercises.reduce((a, ex) =>
     a + ex.sets.filter(st => st.done && st.weight).reduce((b, st) => b + (parseFloat(st.weight)||0) * (parseInt(st.reps)||0), 0), 0);
@@ -1484,6 +1638,74 @@ const COMMON_EXERCISES = [
   'Box Jump', 'Broad Jump', 'Burpee', 'Sled Push',
   'Sled Pull', 'Farmer Carry', 'Trap Bar Carry', 'Battle Ropes'
 ];
+
+// ═══════════════════════════════════════════════════════════
+//  SAVE SESSION AS PROGRAM
+// ═══════════════════════════════════════════════════════════
+
+function saveSessionAsProgram(session) {
+  if (!session || !session.exercises.length) {
+    showToast('No exercises to save', 'error');
+    return;
+  }
+  // Close whichever modal is open
+  closeModal('modal-finish-session');
+  closeModal('modal-history-detail');
+  // Pre-populate the program modal with this session's exercises
+  document.getElementById('program-modal-title').textContent = 'Save as Program';
+  document.getElementById('prog-name').value = session.programName && session.programName !== 'Custom' ? session.programName : '';
+  document.getElementById('prog-desc').value = '';
+  document.getElementById('prog-editing-id').value = '';
+  // Map session exercises → program exercise format
+  tempExercises = session.exercises.map(ex => ({
+    name: ex.name,
+    sets: ex.sets.length || 3,
+    reps: ex.sets[0]?.reps || '8-12'
+  }));
+  renderProgExercises(tempExercises);
+  openModal('modal-program');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MANUAL PR ENTRY
+// ═══════════════════════════════════════════════════════════
+
+function openManualPR() {
+  // Pre-fill date with today
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('manual-pr-date').value = today;
+  document.getElementById('manual-pr-exercise').value = '';
+  document.getElementById('manual-pr-weight').value = '';
+  document.getElementById('manual-pr-reps').value = '';
+  // Populate datalist with all known exercises
+  const dl = document.getElementById('manual-pr-exercise-list');
+  dl.innerHTML = getAllExerciseNames().map(n => `<option value="${n}">`).join('');
+  openModal('modal-manual-pr');
+}
+
+function saveManualPR() {
+  const exercise = document.getElementById('manual-pr-exercise').value.trim();
+  const weight = parseFloat(document.getElementById('manual-pr-weight').value);
+  const reps = parseInt(document.getElementById('manual-pr-reps').value);
+  const dateVal = document.getElementById('manual-pr-date').value;
+  if (!exercise) { showToast('Enter exercise name', 'error'); return; }
+  if (isNaN(weight) || weight <= 0) { showToast('Enter a valid weight', 'error'); return; }
+  if (isNaN(reps) || reps <= 0) { showToast('Enter valid reps', 'error'); return; }
+  const date = dateVal ? new Date(dateVal).toISOString() : new Date().toISOString();
+  const key = exercise.toLowerCase();
+  const existing = db.prs[key];
+  db.prs[key] = { exercise, weight, reps, date };
+  saveDB();
+  closeModal('modal-manual-pr');
+  const isNew = !existing;
+  const isBetter = existing && (weight > existing.weight || (weight === existing.weight && reps > existing.reps));
+  if (isNew || isBetter) {
+    showToast('🏆 PR saved! ' + exercise + ': ' + weight + 'kg × ' + reps, 'success');
+  } else {
+    showToast('PR updated for ' + exercise, 'success');
+  }
+  renderPRs();
+}
 
 // ═══════════════════════════════════════════════════════════
 //  INIT
