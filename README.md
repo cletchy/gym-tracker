@@ -1,2 +1,2 @@
 # gym-tracker
-local gym tracker register
+Local gym tracker. 
