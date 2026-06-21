@@ -121,13 +121,29 @@
     #session-top { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 8px; }
     #session-picker-panel {
       flex-shrink: 0;
-      height: 260px;
+      height: 300px;
       background: var(--surface);
       border-top: 1px solid var(--border);
       display: flex;
       flex-direction: column;
+      transition: height .25s ease;
     }
-    .picker-search { padding: 10px 12px 6px; }
+    #session-picker-panel.collapsed { height: 50px; }
+    .picker-header {
+      flex-shrink: 0; height: 50px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 16px; cursor: pointer; user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .picker-header-label {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 15px; font-weight: 600; color: var(--accent);
+    }
+    .picker-chevron { color: var(--text3); font-size: 16px; transition: transform .25s ease; }
+    #session-picker-panel.collapsed .picker-chevron { transform: rotate(180deg); }
+    #session-picker-panel.collapsed .picker-search,
+    #session-picker-panel.collapsed .picker-list { display: none; }
+    .picker-search { padding: 4px 12px 6px; }
     .picker-search input {
       width: 100%; background: var(--surface2); border: 1px solid var(--border);
       border-radius: 8px; color: var(--text); font-size: 15px; padding: 8px 12px;
@@ -320,8 +336,12 @@
         </div>
       </div>
 
-      <!-- Bottom: exercise picker panel -->
+      <!-- Bottom: exercise picker panel (collapsible drawer) -->
       <div id="session-picker-panel">
+        <div class="picker-header" onclick="togglePicker()">
+          <span class="picker-header-label">＋ Add Exercise</span>
+          <span class="picker-chevron">▾</span>
+        </div>
         <div class="picker-search">
           <input type="text" id="picker-search-input" placeholder="Search or type a custom exercise…"
             oninput="filterExercisePicker(this.value)"
@@ -717,7 +737,7 @@ let sessionPaused = false;
 let sessionPausedAt = 0;   // accumulated paused ms
 
 function startSession() {
-  if (activeSession) { showScreen('session'); return; } // resume if already running
+  if (activeSession) { showScreen('session'); togglePicker(activeSession.exercises.length === 0); return; } // resume if already running
   const prog = db.programs.find(p => p.id === db.settings.activeProgramId);
   activeSession = {
     id: uid(),
@@ -735,6 +755,7 @@ function startSession() {
   showScreen('session');
   renderSession();
   renderExercisePicker('');
+  togglePicker(activeSession.exercises.length === 0); // expanded for a fresh session, else collapsed
   updateSessionBar();
 }
 
@@ -822,6 +843,22 @@ function updateSessionBar() {
 
 // ── Exercise picker (bottom panel) ──
 
+// Collapse/expand the picker drawer. Pass true to force open, false to force closed.
+function togglePicker(force) {
+  const panel = document.getElementById('session-picker-panel');
+  if (!panel) return;
+  const expand = (force === undefined) ? panel.classList.contains('collapsed') : force;
+  panel.classList.toggle('collapsed', !expand);
+  const input = document.getElementById('picker-search-input');
+  if (expand) {
+    setTimeout(() => input && input.focus(), 260);
+  } else if (input) {
+    input.value = '';
+    input.blur();
+    renderExercisePicker('');
+  }
+}
+
 function renderExercisePicker(query) {
   const q = (query || '').toLowerCase().trim();
   const container = document.getElementById('picker-list');
@@ -895,6 +932,7 @@ function addExerciseFromPicker(name) {
     // Expand it and scroll to it
     activeSession.exercises[existing].collapsed = false;
     renderExerciseBlock(existing);
+    togglePicker(false);
     document.getElementById('exblock-' + existing)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
@@ -909,6 +947,8 @@ function addExerciseFromPicker(name) {
   if (exCount) exCount.textContent = activeSession.exercises.length;
   // Render new block
   appendExerciseBlock(eIdx);
+  // Collapse the picker so the logging area gets the full screen
+  togglePicker(false);
   // Scroll new block into view
   setTimeout(() => {
     document.getElementById('exblock-' + eIdx)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
